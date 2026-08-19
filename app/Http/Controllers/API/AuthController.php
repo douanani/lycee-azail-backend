@@ -1,22 +1,15 @@
 <?php
-// ============================================================
-// app/Http/Controllers/API/AuthController.php
-// ============================================================
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
-    /**
-     * POST /api/v1/auth/login
-     */
     public function login(Request $request): JsonResponse
     {
         $request->validate([
@@ -24,9 +17,7 @@ class AuthController extends Controller
             'password' => 'required|string',
         ]);
 
-        $user = User::with('role')
-            ->where('email', $request->email)
-            ->first();
+        $user = User::with('role')->where('email', $request->email)->first();
 
         if (!$user || !Hash::check($request->password, $user->password)) {
             throw ValidationException::withMessages([
@@ -40,7 +31,6 @@ class AuthController extends Controller
 
         $user->update(['last_login_at' => now()]);
 
-        // Ability tokens scoped to the user's role
         $abilities = $this->getAbilitiesForRole($user->role->name);
         $token = $user->createToken('auth_token', $abilities)->plainTextToken;
 
@@ -58,18 +48,12 @@ class AuthController extends Controller
         ]);
     }
 
-    /**
-     * POST /api/v1/auth/logout
-     */
     public function logout(Request $request): JsonResponse
     {
         $request->user()->currentAccessToken()->delete();
         return response()->json(['message' => 'تم تسجيل الخروج بنجاح.']);
     }
 
-    /**
-     * GET /api/v1/auth/me
-     */
     public function me(Request $request): JsonResponse
     {
         $user = $request->user()->load('role');
@@ -82,6 +66,34 @@ class AuthController extends Controller
             'label'  => $user->role->label,
             'avatar' => $user->avatar,
         ]);
+    }
+
+    /**
+     * PUT /api/v1/auth/change-password
+     * Any authenticated user changes their own password.
+     */
+    public function changePassword(Request $request): JsonResponse
+    {
+        $request->validate([
+            'current_password' => 'required|string',
+            'password'         => 'required|string|min:8|confirmed',
+        ]);
+
+        $user = $request->user();
+
+        if (!Hash::check($request->current_password, $user->password)) {
+            throw ValidationException::withMessages([
+                'current_password' => ['كلمة المرور الحالية غير صحيحة.'],
+            ]);
+        }
+
+        $user->update(['password' => Hash::make($request->password)]);
+
+        // Revoke every other active session — force re-login elsewhere
+        $currentTokenId = $user->currentAccessToken()->id;
+        $user->tokens()->where('id', '!=', $currentTokenId)->delete();
+
+        return response()->json(['message' => 'تم تغيير كلمة المرور بنجاح.']);
     }
 
     private function getAbilitiesForRole(string $role): array
